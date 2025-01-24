@@ -1,0 +1,36 @@
+{
+  "name": "@enercido/clay-compiler-esbuild",
+  "version": "0.0.1",
+  "main": "index.js",
+  "bin": {
+    "clay-compiler": "index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "type": "module",
+  "keywords": [
+    "esbuild",
+    "clay",
+    "postcss"
+  ],
+  "author": {
+    "name": "Enercido ALcantara"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ealcantara22/clay-compiler-esbuild.git"
+  },
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@enercido/esbuild-plugin-postcss": "^1.0.1",
+    "autoprefixer": "^10.4.20",
+    "esbuild": "0.24.2",
+    "globby": "^14.0.2",
+    "postcss-import": "^16.1.0",
+    "postcss-mixins": "^11.0.3",
+    "postcss-nested": "^7.0.2",
+    "postcss-simple-vars": "^7.0.1"
+  }
+}
