@@ -1,8 +1,7 @@
 import path from 'node:path'
 import process from 'node:process'
-import * as esbuild from 'esbuild'
 import { globby } from "globby";
-import postCssPlugin from '@deanc/esbuild-plugin-postcss';
+import postCssPlugin from '@enercido/esbuild-plugin-postcss';
 import cssImport from 'postcss-import';
 import autoprefixer from 'autoprefixer';
 import mixins from 'postcss-mixins';
@@ -13,11 +12,6 @@ const outdir = path.join(process.cwd(), 'public', 'css');
 const cssImportPath = path.join(process.cwd(), 'styleguides')
 const componentsSrc = await globby(path.join(process.cwd(), 'styleguides', '**', 'components', '*.css'));
 const layoutsSrc = await globby(path.join(process.cwd(), 'styleguides', '**', 'layouts', '*.css'));
-// const variables = {
-//   'asset-host': 'https://assets.nymag.com', // todo: change
-//   'asset-path': '',
-//   minify: ''
-// };
 const {
   CLAYCLI_COMPILE_ASSET_HOST,
   CLAYCLI_COMPILE_ASSET_PATH,
@@ -48,29 +42,21 @@ const formatEntryPoint = (filePath) => {
   }
 }
 
-export default async () => {
-  try {
-    let result = await esbuild.build({
-      entryPoints: componentsSrc.concat(layoutsSrc).map(entry => formatEntryPoint(entry)),
-      outdir,
-      bundle: true,
-      platform: 'browser',
-      format: 'cjs',
+export const stylesConfig = {
+  entryPoints: componentsSrc.concat(layoutsSrc).map(entry => formatEntryPoint(entry)),
+  outdir,
+  bundle: true,
+  platform: 'browser',
+  format: 'cjs',
+  plugins: [
+    postCssPlugin({
       plugins: [
-        postCssPlugin({
-          plugins: [
-            cssImport({path: [cssImportPath]}),
-            autoprefixer({overrideBrowserslist: ['> 2%']}),
-            mixins(),
-            simpleVars({variables}),
-            nested()
-          ]
-        }),
-      ],
-    });
-    console.log('result:', result);
-  } catch (e) {
-    console.error(e);
-  }
+        cssImport({path: [cssImportPath]}),
+        autoprefixer({overrideBrowserslist: ['> 2%']}),
+        mixins(),
+        simpleVars({variables}),
+        nested()
+      ]
+    }),
+  ],
 }
-

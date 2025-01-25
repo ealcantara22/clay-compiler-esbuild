@@ -1,10 +1,7 @@
 {
   "name": "@enercido/clay-compiler-esbuild",
-  "version": "0.0.1",
+  "version": "0.0.6",
   "main": "index.js",
-  "bin": {
-    "clay-compiler": "index.js"
-  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
