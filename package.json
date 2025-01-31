@@ -18,6 +18,10 @@
     "type": "git",
     "url": "https://github.com/ealcantara22/clay-compiler-esbuild.git"
   },
+  "engines": {
+    "npm": ">=10.0.0",
+    "node": ">=20.0.0"
+  },
   "license": "ISC",
   "description": "",
   "dependencies": {
