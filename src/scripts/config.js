@@ -125,16 +125,17 @@ function clayScriptPlugin(options = {}) {
 async function processModule(filePath, cachedIds, registry, ids) {
   let moduleId;
 
-  if (cachedIds.has(filePath) && ids[filePath]) {
-    // already processed
-    if (!isWatching) return;
+  if (cachedIds.has(filePath)) { // module has already been detected
 
-    // already processed, but watch mode is on, so we need the module ID in cache
+    // module already processed, do not process it again unless watch mode is enabled
+    if (ids[filePath] && !isWatching) return;
+
     moduleId = cachedIds.get(filePath);
+  } else {
+    moduleId = getModuleId(filePath);
+    cachedIds.set(filePath, moduleId);
   }
 
-  moduleId = moduleId || getModuleId(filePath);
-  cachedIds.set(filePath, moduleId);
   ids[filePath] = moduleId;
   registry[moduleId] = [];
 
@@ -173,6 +174,7 @@ async function processModule(filePath, cachedIds, registry, ids) {
       // if (vueSFC.map) sourceMap = vueSFC.map; // todo
     } catch (e) {
       console.error(`error parsing vue file: ${filePath}`, e);
+      process.exit(1); // todo: handle this better
     }
   }
 
@@ -197,9 +199,20 @@ async function processModule(filePath, cachedIds, registry, ids) {
       async CallExpression(node) {
         if (node.callee.type === 'Identifier' && node.callee.name === 'require' && node.arguments.length === 1 && node.arguments[0].type === 'Literal') {
           const requirePath = node.arguments[0].value;
-          const resolvedPath = resolveModule(requirePath, basedir);
+          let resolvedPath = resolveModule(requirePath, basedir);
 
           if (!resolvedPath) return;
+
+          if (resolvedPath.includes('/services/server')) {
+            resolvedPath = resolvedPath.replace('/services/server', '/services/client');
+            const resolvedPathExists = await fs.pathExists(resolvedPath);
+
+            if (!resolvedPathExists) {
+              console.error(`A server-side only service must have a client-side counterpart: ${requirePath} -> ${resolvedPath}`);
+              process.exit(1); // todo: handle this better
+            }
+          }
+
 
           let dependencyId;
 
