@@ -7,10 +7,11 @@ import { parse } from "acorn";
 import { simple } from "acorn-walk";
 import acornGlobals from "acorn-globals";
 import MagicString from "magic-string";
-import { getModuleId, resolveModule} from "./helpers.js";
+import { getBucketByFilename, getModuleId, resolveModule} from "./helpers.js";
 import vueSfcHandler from "./vue/vue-sfc-handler.js";
 import { builtIns, supportedGlobals } from "./node/polyfills.js";
 import _keyBy from "lodash/keyBy.js";
+import _isFinite from "lodash/isFinite.js";
 
 const publicDir = path.resolve(process.cwd(), 'public', 'js');
 const registryPath = path.join(publicDir, '_registry.json');
@@ -24,12 +25,14 @@ const paths =  { publicDir, registryPath, idsPath, clientEnvPath };
 // const componentKilnGlob = await globby(path.join(process.cwd(), 'components', '**', 'kiln.js'));
 // const layoutClientsSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'client.js'));
 // const layoutModelsSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'model.js'));
+// const kilnPluginsGlob = await globby(path.join(process.cwd(), 'services', 'kiln', 'index.js'));
 // const entryFiles = []
 //   .concat(componentClientsSrc)
 //   .concat(componentModelsSrc)
 //   .concat(componentKilnGlob)
 //   .concat(layoutClientsSrc)
 //   .concat(layoutModelsSrc);
+//   .concat(kilnPluginsGlob);
 
 //todo: replace with process.cwd(), hardcoding this for now, also, check helpers.js getModuleId method
 const cwd = '<path to your project>';
@@ -50,6 +53,38 @@ const config = {
   outdir: publicDir,
   sourcemap: false,
   plugins: [ clayScriptPlugin() ]
+};
+
+// buckets
+const bucketsConfig = {
+  deps: {
+    'a-d': { fileName: '_deps-a-d.js', content: '' },
+    'e-h': { fileName: '_deps-e-h.js', content: '' },
+    'i-l': { fileName: '_deps-i-l.js', content: '' },
+    'm-p': { fileName: '_deps-m-p.js', content: '' },
+    'q-t': { fileName: '_deps-q-t.js', content: '' },
+    'u-z': { fileName: '_deps-u-z.js', content: '' },
+  },
+  kiln: {
+    'a-d': { fileName: '_kiln-a-d.js', content: '' },
+    'e-h': { fileName: '_kiln-e-h.js', content: '' },
+    'i-l': { fileName: '_kiln-i-l.js', content: '' },
+    'm-p': { fileName: '_kiln-m-p.js', content: '' },
+    'q-t': { fileName: '_kiln-q-t.js', content: '' },
+    'u-z': { fileName: '_kiln-u-z.js', content: '' },
+  },
+  models: {
+    'a-d': { fileName: '_models-a-d.js', content: '' },
+    'e-h': { fileName: '_models-e-h.js', content: '' },
+    'i-l': { fileName: '_models-i-l.js', content: '' },
+    'm-p': { fileName: '_models-m-p.js', content: '' },
+    'q-t': { fileName: '_models-q-t.js', content: '' },
+    'u-z': { fileName: '_models-u-z.js', content: '' },
+  },
+  kilnPlugins: {
+    fileName: '_kiln-plugins.js',
+    content: ''
+  },
 };
 
 // temp init method
@@ -108,6 +143,9 @@ function clayScriptPlugin(options = {}) {
         await fs.outputJson(paths.registryPath, registry, {spaces: 2});
         await fs.outputJson(paths.idsPath, ids, {spaces: 2});
 
+        // write each bucket content to disk
+        await processBuckets();
+
         // watch works, but it needs to by pass the cached Ids
         // to test, watch mode, uncomment the line below, and call init(true)
         // isWatching = true
@@ -163,7 +201,6 @@ async function processModule(filePath, cachedIds, registry, ids) {
   let prependContent = `window.modules["${moduleId}"] = [function(require,module,exports){`;
   let appendContent = '';
 
-  // const fileName = getOutputPath(filePath, moduleId); todo
   const fileName = `${moduleId}.js`;
 
   // compile vue to JS before creating the magic string
@@ -194,7 +231,8 @@ async function processModule(filePath, cachedIds, registry, ids) {
     s.append('},{}];');
 
     // write to disk
-    await fs.writeFile(path.join(paths.publicDir, fileName), s.toString());
+    await writeToDisk(filePath, moduleId, s.toString());
+
     return;
   }
 
@@ -258,7 +296,7 @@ async function processModule(filePath, cachedIds, registry, ids) {
   s.append(appendContent);
 
   // write to disk
-  await fs.writeFile(path.join(paths.publicDir, fileName), s.toString());
+  await writeToDisk(filePath, moduleId, s.toString());
 
   // process module dependencies
   return processModuleDependencies(toProcess, cachedIds, registry, ids);
@@ -308,7 +346,11 @@ async function processReplacements(replacementTasks = [], s, toProcess, cachedId
       registry[moduleId].push(dependencyId);
 
     // Replace 'require' with 'require(<module ID>)'
-    s.overwrite(node.start, node.end, `require(${dependencyId})`);
+    const requireText = dependencyId.toString().endsWith('.kilnplugin')
+      ? `require("${dependencyId}")`
+      : `require(${dependencyId})`;
+
+    s.overwrite(node.start, node.end, requireText);
   }
 }
 
@@ -382,6 +424,91 @@ async function handleFileContentWithGlobals(filePath, globals, ids) {
   });
 
   return { append, prepend };
+}
+
+/**
+ * Writes content to disk and updates the corresponding bucket configuration
+ * based on the provided module type and file path.
+ *
+ * @param {string} filePath - The path of the file being written to disk.
+ * @param {string|number} moduleId - The identifier of the module, which determines how and where the content is stored.
+ * @param {string} content - The content to be written to the file and relevant bucket configurations.
+ * @return {Promise<void>} A promise that resolves when the content has been written to the disk and the bucket configurations are updated.
+ */
+async function writeToDisk(filePath, moduleId, content) {
+  // all kiln plugins get compiled to public/js/_kiln-plugins.js
+  if (moduleId.toString().endsWith('.kilnplugin')) {
+    // having a single output for all kiln plugin files represents a problem for watch mode and incremental builds.
+    // it's ok for now as we're looking one to one parity with claycli first and improve later
+    bucketsConfig.kilnPlugins.content += content;
+    return;
+  }
+
+  // write <name(.model|.client|.kiln)/number>.js
+  await fs.writeFile(path.join(paths.publicDir, `${moduleId}.js`), content);
+
+  if (moduleId.toString().endsWith('.kiln')) {
+    // kiln.js files are compiled to <name>.kiln.js and _kiln-<letter>-<letter>.js
+    const bucket = getBucketByFilename(moduleId);
+
+    bucketsConfig.kiln[bucket].content += content;
+  } else if (moduleId.toString().endsWith('.model')) {
+    // model.js files are compiled to <name>.model.js and _models-<letter>-<letter>.js
+    const bucket = getBucketByFilename(moduleId);
+
+    bucketsConfig.models[bucket].content += content;
+  } else if (_isFinite(parseInt(moduleId))){
+    // dependency buckets, deps get put into <number>.js and _deps-<letter>-<letter>.js
+    const name = path.parse(filePath).name;
+    const bucket = getBucketByFilename(name);
+
+    bucketsConfig.deps[bucket].content += content;
+  }
+}
+
+/**
+ * Processes and writes bucket configurations to their respective file paths.
+ * Iterates through different bucket configurations such as models, kiln, and dependencies
+ * and writes their associated content to files in the public directory.
+ *
+ * @return {Promise<void>} A promise that resolves once all bucket configurations are processed and written to disk.
+ */
+async function processBuckets() {
+  if (bucketsConfig.kilnPlugins.content) {
+    const filePath = path.join(paths.publicDir, bucketsConfig.kilnPlugins.fileName);
+
+    await fs.writeFile(filePath, bucketsConfig.kilnPlugins.content);
+  }
+
+  for (const bucket in bucketsConfig.models) {
+    const fileName = bucketsConfig.models[bucket].fileName;
+    const content = bucketsConfig.models[bucket].content;
+    if (content) {
+      const filePath = path.join(paths.publicDir, fileName);
+
+      await fs.writeFile(filePath, content);
+    }
+  }
+
+  for (const bucket in bucketsConfig.kiln) {
+    const fileName = bucketsConfig.kiln[bucket].fileName;
+    const content = bucketsConfig.kiln[bucket].content;
+    if (content) {
+      const filePath = path.join(paths.publicDir, fileName);
+
+      await fs.writeFile(filePath, content);
+    }
+  }
+
+  for (const bucket in bucketsConfig.deps) {
+    const fileName = bucketsConfig.deps[bucket].fileName;
+    const content = bucketsConfig.deps[bucket].content;
+    if (content) {
+      const filePath = path.join(paths.publicDir, fileName);
+
+      await fs.writeFile(filePath, content);
+    }
+  }
 }
 
 await init()

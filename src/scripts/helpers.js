@@ -1,6 +1,6 @@
 import path from "node:path";
 import process from "node:process";
-import * as _ from 'lodash';
+import _last from 'lodash/last.js';
 import fs from 'fs-extra';
 
 let numericIdCounter = 1;
@@ -28,7 +28,7 @@ export function getModuleId(file = '', legacyFiles = []) {
 
   if (isKilnPlugin) {
     const parsedPath = path.parse(file);
-    return `${_.last(parsedPath.dir.split(path.sep))}_${parsedPath.name}.kilnplugin`;
+    return `${ _last(parsedPath.dir.split(path.sep))}_${parsedPath.name}.kilnplugin`;
   } else if (isLegacyFile) {
     return `${path.parse(file).name}.legacy`;
   } else if (file.includes(path.join(cwd, 'components'))) {
@@ -108,6 +108,22 @@ export function resolveModule(modulePath, basedir) {
     return null;
   } catch (err) {
     return null;
+  }
+}
+
+export function getBucketByFilename(name) {
+  if (name.match(/^[a-d]/i)) {
+    return 'a-d';
+  } else if (name.match(/^[e-h]/i)) {
+    return 'e-h';
+  } else if (name.match(/^[i-l]/i)) {
+    return 'i-l';
+  } else if (name.match(/^[m-p]/i)) {
+    return 'm-p';
+  } else if (name.match(/^[q-t]/i)) {
+    return 'q-t';
+  } else {
+    return 'u-z';
   }
 }
 
