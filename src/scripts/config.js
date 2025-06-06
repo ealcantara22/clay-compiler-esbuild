@@ -5,9 +5,11 @@ import fs from 'fs-extra';
 import { globby } from "globby";
 import { parse } from "acorn";
 import { simple } from "acorn-walk";
+import acornGlobals from "acorn-globals";
 import MagicString from "magic-string";
 import { getModuleId, resolveModule} from "./helpers.js";
-import vueSfcHandler from "./vue-sfc-handler.js";
+import vueSfcHandler from "./vue/vue-sfc-handler.js";
+import { builtIns, supportedGlobals } from "./node/polyfills.js";
 import _keyBy from "lodash/keyBy.js";
 
 const publicDir = path.resolve(process.cwd(), 'public', 'js');
@@ -37,6 +39,7 @@ const entryFiles = [
 
 let isWatching = false;
 
+const nodeBuiltIns = Object.keys(builtIns);
 // esbuild config
 const config = {
   entryPoints: entryFiles,
@@ -82,10 +85,11 @@ function clayScriptPlugin(options = {}) {
       const ids = {};
       const cachedIds = new Map();
 
-      build.onStart(() => {
+      build.onStart(async () => {
         // called before build starts, the idea is to pre-process node-globals (process, global, etc), and built-ins here
         // so they're properly available to all modules and we can replace them with their browser equivalents
         // ex. path -> path-browserify
+        await registerGlobalsAndBuiltInsPolyfills(cachedIds, registry, ids);
       })
 
       // track all resolved modules
@@ -153,7 +157,11 @@ async function processModule(filePath, cachedIds, registry, ids) {
   const isJson = filePath.endsWith('.json');
   const basedir = path.dirname(filePath);
   const toProcess = []; // unprocessed dependencies
-  const prependContent = `window.modules["${moduleId}"] = [function(require,module,exports){`;
+  const replacementTasks = []; // module replacement async operations queue
+  const foundSupportedGlobals = []; // dedupe list of node globals found in this file
+
+  let prependContent = `window.modules["${moduleId}"] = [function(require,module,exports){`;
+  let appendContent = '';
 
   // const fileName = getOutputPath(filePath, moduleId); todo
   const fileName = `${moduleId}.js`;
@@ -193,55 +201,58 @@ async function processModule(filePath, cachedIds, registry, ids) {
   // travel AST and replace require() with require(<module ID>))
   try {
     const ast = parse(code, {ecmaVersion: 2020, sourceType: 'module'});
+    const foundGlobals = acornGlobals(code);
 
-    // require replacement
+    for (const g of foundGlobals) {
+      if (supportedGlobals.includes(g.name) && !foundSupportedGlobals.includes(g.name))
+        foundSupportedGlobals.push(g.name);
+    }
+
+    // AST walking is a synchronous operation. to ensure the logic executes in the correct order without
+    // race conditions, async I/O operations must be queued and processed after the walk is complete.
     simple(ast, {
       async CallExpression(node) {
         if (node.callee.type === 'Identifier' && node.callee.name === 'require' && node.arguments.length === 1 && node.arguments[0].type === 'Literal') {
           const requirePath = node.arguments[0].value;
-          let resolvedPath = resolveModule(requirePath, basedir);
 
-          if (!resolvedPath) return;
+          if (nodeBuiltIns.includes(requirePath)) {
+            const builtInPath = builtIns[requirePath];
+            const builtInId = ids[builtInPath];
 
-          if (resolvedPath.includes('/services/server')) {
-            resolvedPath = resolvedPath.replace('/services/server', '/services/client');
-            const resolvedPathExists = await fs.pathExists(resolvedPath);
-
-            if (!resolvedPathExists) {
-              console.error(`A server-side only service must have a client-side counterpart: ${requirePath} -> ${resolvedPath}`);
-              process.exit(1); // todo: handle this better
-            }
+            // Replace 'require' builtin with 'require(< builtIn polyfill ID>)'
+            s.overwrite(node.start, node.end, `require(${builtInId})`);
+            return; // return as builtins don't have dependencies
           }
 
-
-          let dependencyId;
-
-          if (!cachedIds.has(resolvedPath)) {
-            dependencyId = getModuleId(resolvedPath);
-            cachedIds.set(resolvedPath, dependencyId);
-            toProcess.push(resolvedPath);
-          } else {
-            dependencyId = cachedIds.get(resolvedPath);
-          }
-
-          if (!registry[moduleId].includes(dependencyId))
-            registry[moduleId].push(dependencyId);
-
-          // Replace 'require' with 'require(<module ID>)'
-          s.overwrite(node.start, node.end, `require(${dependencyId})`);
+          replacementTasks.push({
+            basedir,
+            moduleId,
+            node,
+            requirePath,
+          });
         }
       }
     });
+
+    await processReplacements(replacementTasks, s, toProcess, cachedIds, registry);
 
   } catch (e) {
     console.error(`AST error: ${filePath}`, e);
     return;
   }
 
+  if (foundSupportedGlobals.length > 0) {
+    const { append, prepend } = await handleFileContentWithGlobals(filePath, foundSupportedGlobals, ids);
+
+    prependContent += prepend;
+    appendContent += append;
+  }
+
   // prepend and append the browserify module header and footer
   const dependencies = registry[moduleId];
   const dependenciesObj = _keyBy(dependencies || [], (number) => number.toString());
-  const appendContent = `}, ${JSON.stringify(dependenciesObj)}];`;
+
+  appendContent += `}, ${JSON.stringify(dependenciesObj)}];`;
 
   s.prepend(prependContent);
   s.append(appendContent);
@@ -251,6 +262,54 @@ async function processModule(filePath, cachedIds, registry, ids) {
 
   // process module dependencies
   return processModuleDependencies(toProcess, cachedIds, registry, ids);
+}
+
+/**
+ * Processes a list of replacement tasks by resolving module paths, updating dependencies,
+ * and ensuring the proper client-side counterpart exists for server-side services. Replaces
+ * specified nodes with updated `require` statements containing resolved module IDs.
+ *
+ * @param {Array<Object>} replacementTasks - A list of replacement tasks containing necessary information to process each replacement.
+ * @param {Object} s - The object used to overwrite source code during the replacement process.
+ * @param {Array<string>} toProcess - A list of module paths that still need to be processed.
+ * @param {Map<string, number>} cachedIds - A cache mapping resolved module paths to their respective dependency IDs for performance optimization.
+ * @param {Object} registry - A structure mapping module IDs to their respective dependency IDs.
+ * @return {Promise<void>} A promise that resolves once all replacement tasks have been processed.
+ */
+async function processReplacements(replacementTasks = [], s, toProcess, cachedIds, registry) {
+  for (const task of replacementTasks) {
+    const { basedir, moduleId, node, requirePath } = task;
+
+    let resolvedPath = resolveModule(requirePath, basedir);
+
+    if (!resolvedPath) return;
+
+    if (resolvedPath.includes('/services/server')) {
+      resolvedPath = resolvedPath.replace('/services/server', '/services/client');
+      const resolvedPathExists = await fs.pathExists(resolvedPath);
+
+      if (!resolvedPathExists) {
+        console.error(`A server-side only service must have a client-side counterpart: ${requirePath} -> ${resolvedPath}`);
+        process.exit(1); // todo: handle this better
+      }
+    }
+
+    let dependencyId;
+
+    if (!cachedIds.has(resolvedPath)) {
+      dependencyId = getModuleId(resolvedPath);
+      cachedIds.set(resolvedPath, dependencyId);
+      toProcess.push(resolvedPath);
+    } else {
+      dependencyId = cachedIds.get(resolvedPath);
+    }
+
+    if (!registry[moduleId].includes(dependencyId))
+      registry[moduleId].push(dependencyId);
+
+    // Replace 'require' with 'require(<module ID>)'
+    s.overwrite(node.start, node.end, `require(${dependencyId})`);
+  }
 }
 
 /**
@@ -266,6 +325,63 @@ async function processModuleDependencies(dependencies = [], cachedIds, registry,
   for (const filePath of dependencies) {
     await processModule(filePath, cachedIds, registry, ids);
   }
+}
+
+/**
+ * Asynchronously registers global and built-in polyfills by processing each module in the input list.
+ *
+ * @param {Map<string, number>} cachedIds - A cache object that holds identifiers of previously processed modules.
+ * @param {Object} registry - Registry object that manages module registrations and dependencies.
+ * @param {Object<string, number>} ids - A map of identifiers to be used for tracking and linking modules.
+ * @return {Promise<void>} A promise that resolves when all modules have been processed and registered.
+ */
+async function registerGlobalsAndBuiltInsPolyfills(cachedIds, registry, ids) {
+  for (const filePath of Object.values(builtIns)) {
+    await processModule(filePath, cachedIds, registry, ids);
+  }
+}
+
+/**
+ * Processes the file content with the provided global variables and IDs,
+ * constructing a prepended and appended string to wrap the file content.
+ *
+ * @param {string} filePath - The path to the file to be processed.
+ * @param {string[]} globals - An array of global variable names to include in the wrapper.
+ * @param {Object<string, number>} ids - An object containing the mapping of required module IDs for specified global variables.
+ * @return {Object} Returns an object containing two string properties: `prepend` and `append`
+ * which represent the constructed wrapper strings for the file content.
+ */
+async function handleFileContentWithGlobals(filePath, globals, ids) {
+  let prepend = `(function (${globals.join(',')}){(function (){`;
+  let append = '}).call(this)}).call(this,';
+
+  // todo: change, use process.cwd
+  const cwd = '<path to your project>';
+
+  globals.forEach((item, index, arr) => {
+    const isLast = (arr.length === index + 1);
+
+    if (item === 'Buffer') {
+      append += `require(${ids[builtIns.buffer]}).Buffer`;
+    }
+
+    if (item === 'process') {
+      append += `require(${ids[builtIns.process]})`;
+    }
+
+    if (item === '__filename') {
+      append += `"/${path.relative(cwd, filePath)}"`;
+    }
+
+    if (item === '__dirname') {
+      append += `"/${path.dirname(path.relative(cwd, filePath))}"`;
+    }
+
+    if (!isLast) append += ',';
+    if (isLast) append += ')';
+  });
+
+  return { append, prepend };
 }
 
 await init()
