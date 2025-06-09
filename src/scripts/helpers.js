@@ -111,6 +111,12 @@ export function resolveModule(modulePath, basedir) {
   }
 }
 
+/**
+ * Determines the bucket category of a filename based on its starting letter.
+ *
+ * @param {string} name The name of the file to categorize.
+ * @return {string} The bucket identifier indicating the range (e.g., 'a-d', 'e-h').
+ */
 export function getBucketByFilename(name) {
   if (name.match(/^[a-d]/i)) {
     return 'a-d';

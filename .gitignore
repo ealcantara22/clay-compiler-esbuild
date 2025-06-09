@@ -4,3 +4,4 @@ node_modules
 # for testing
 src/scripts-old
 public
+client-env.json

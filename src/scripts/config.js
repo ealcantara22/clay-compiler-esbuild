@@ -4,7 +4,7 @@ import * as esbuild from 'esbuild';
 import fs from 'fs-extra';
 import { globby } from "globby";
 import { parse } from "acorn";
-import { simple } from "acorn-walk";
+import { simple, ancestor } from "acorn-walk";
 import acornGlobals from "acorn-globals";
 import MagicString from "magic-string";
 import { getBucketByFilename, getModuleId, resolveModule} from "./helpers.js";
@@ -16,7 +16,7 @@ import _isFinite from "lodash/isFinite.js";
 const publicDir = path.resolve(process.cwd(), 'public', 'js');
 const registryPath = path.join(publicDir, '_registry.json');
 const idsPath = path.join(publicDir, '_ids.json');
-const clientEnvPath = path.join(publicDir, '_client-env.json');
+const clientEnvPath = path.join(process.cwd(), 'client-env.json');
 const paths =  { publicDir, registryPath, idsPath, clientEnvPath };
 
 // globs: commented for now, as we're on early development
@@ -119,19 +119,20 @@ function clayScriptPlugin(options = {}) {
       const registry = {};
       const ids = {};
       const cachedIds = new Map();
+      const envs = []; // client-envs.json content
 
       build.onStart(async () => {
         // called before build starts, the idea is to pre-process node-globals (process, global, etc), and built-ins here
         // so they're properly available to all modules and we can replace them with their browser equivalents
         // ex. path -> path-browserify
-        await registerGlobalsAndBuiltInsPolyfills(cachedIds, registry, ids);
+        await registerGlobalsAndBuiltInsPolyfills(cachedIds, registry, ids, envs);
       })
 
       // track all resolved modules
       build.onResolve({ filter:/.*/ }, async (args) => {
         const filePath = args.path;
 
-        await processModule(filePath, cachedIds, registry, ids);
+        await processModule(filePath, cachedIds, registry, ids, envs);
 
         return null;
       });
@@ -140,8 +141,9 @@ function clayScriptPlugin(options = {}) {
         // called after build is complete, write registry and ids to disk
         // we can handle cleanup, to write one time files to disk (env, client-init, etc), and enable watch mode
 
-        await fs.outputJson(paths.registryPath, registry, {spaces: 2});
-        await fs.outputJson(paths.idsPath, ids, {spaces: 2});
+        await fs.writeJson(paths.registryPath, registry, {spaces: 2});
+        await fs.writeJson(paths.idsPath, ids, {spaces: 2});
+        await fs.writeJson(paths.clientEnvPath, envs, {spaces: 2});
 
         // write each bucket content to disk
         await processBuckets();
@@ -162,9 +164,10 @@ function clayScriptPlugin(options = {}) {
  * @param {Map<string, number>} cachedIds - A map of already processed file paths to their unique module IDs.
  * @param {Object} registry - An object used to keep track of module dependencies, keyed by module IDs.
  * @param {Object.<string, number>} ids - A map of file paths to module IDs, used for quick lookups.
+ * @param {string[]} envs - holds found env vars.
  * @return {Promise<void>} A promise that resolves when processing is complete or rejects if an error occurs.
  */
-async function processModule(filePath, cachedIds, registry, ids) {
+async function processModule(filePath, cachedIds, registry, ids, envs) {
   let moduleId;
 
   if (cachedIds.has(filePath)) { // module has already been detected
@@ -249,7 +252,7 @@ async function processModule(filePath, cachedIds, registry, ids) {
     // AST walking is a synchronous operation. to ensure the logic executes in the correct order without
     // race conditions, async I/O operations must be queued and processed after the walk is complete.
     simple(ast, {
-      async CallExpression(node) {
+      CallExpression(node) {
         if (node.callee.type === 'Identifier' && node.callee.name === 'require' && node.arguments.length === 1 && node.arguments[0].type === 'Literal') {
           const requirePath = node.arguments[0].value;
 
@@ -268,6 +271,27 @@ async function processModule(filePath, cachedIds, registry, ids) {
             node,
             requirePath,
           });
+        }
+      },
+      MemberExpression(node) {
+        if (
+          node.object.type === 'MemberExpression' &&
+          node.object.property &&
+          node.object.property.type === 'Identifier' &&
+          node.object.property.name === 'env' &&
+          node.object.object &&
+          node.object.object.type === 'Identifier' &&
+          node.object.object.name === 'process' &&
+          node.property &&
+          node.property.type === 'Identifier'
+        ) {
+          const envName = node.property.name;
+
+          // save the env var name into client-envs.json
+          if (envs.indexOf(envName) === -1) envs.push(envName);
+
+          // override to window.process.env
+          s.overwrite(node.object.start, node.object.end, 'window.process.env');
         }
       }
     });
@@ -299,7 +323,7 @@ async function processModule(filePath, cachedIds, registry, ids) {
   await writeToDisk(filePath, moduleId, s.toString());
 
   // process module dependencies
-  return processModuleDependencies(toProcess, cachedIds, registry, ids);
+  return processModuleDependencies(toProcess, cachedIds, registry, ids, envs);
 }
 
 /**
@@ -361,11 +385,12 @@ async function processReplacements(replacementTasks = [], s, toProcess, cachedId
  * @param {Map<string, number>} cachedIds - A set containing cached module IDs to prevent redundant processing.
  * @param {Object} registry - A registry mapping module paths to their processed data.
  * @param {Object} ids - A set for tracking IDs of processed modules.
+ * @param {string[]} envs - holds found env vars.
  * @return {Promise<void>} A promise that resolves when all module dependencies are processed.
  */
-async function processModuleDependencies(dependencies = [], cachedIds, registry, ids) {
+async function processModuleDependencies(dependencies = [], cachedIds, registry, ids, envs) {
   for (const filePath of dependencies) {
-    await processModule(filePath, cachedIds, registry, ids);
+    await processModule(filePath, cachedIds, registry, ids, envs);
   }
 }
 
@@ -375,11 +400,12 @@ async function processModuleDependencies(dependencies = [], cachedIds, registry,
  * @param {Map<string, number>} cachedIds - A cache object that holds identifiers of previously processed modules.
  * @param {Object} registry - Registry object that manages module registrations and dependencies.
  * @param {Object<string, number>} ids - A map of identifiers to be used for tracking and linking modules.
+ * @param {string[]} envs - holds found env vars.
  * @return {Promise<void>} A promise that resolves when all modules have been processed and registered.
  */
-async function registerGlobalsAndBuiltInsPolyfills(cachedIds, registry, ids) {
+async function registerGlobalsAndBuiltInsPolyfills(cachedIds, registry, ids, envs) {
   for (const filePath of Object.values(builtIns)) {
-    await processModule(filePath, cachedIds, registry, ids);
+    await processModule(filePath, cachedIds, registry, ids, envs);
   }
 }
 
