@@ -2,6 +2,7 @@ import path from "node:path";
 import process from "node:process";
 import _last from 'lodash/last.js';
 import fs from 'fs-extra';
+import { globby } from "globby";
 
 let numericIdCounter = 1;
 
@@ -131,6 +132,29 @@ export function getBucketByFilename(name) {
   } else {
     return 'u-z';
   }
+}
+
+/**
+ * Retrieves a flattened array of legacy file paths that match the provided globs.
+ * The method uses the current working directory as the base path for resolving the globs.
+ *
+ * @param {string[]} globs - An array of glob patterns to match files against.
+ * @return {Promise<string[]>} A promise that resolves to a flattened array of file paths matching the provided globs.
+ */
+export async function getLegacyFilesByGlobs(globs = []) {
+  if (!globs.length) return [];
+
+  //todo: replace with process.cwd(), hardcoding this for now
+  const cwd = '<path to your project>';
+  const legacyFiles = [];
+
+  for (const glob of globs) {
+    const filePaths = await globby(path.join(cwd, glob));
+
+    legacyFiles.push(...filePaths);
+  }
+
+  return legacyFiles;
 }
 
 /**

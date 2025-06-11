@@ -7,7 +7,7 @@ import { parse } from "acorn";
 import { simple, ancestor } from "acorn-walk";
 import acornGlobals from "acorn-globals";
 import MagicString from "magic-string";
-import { getBucketByFilename, getModuleId, resolveModule} from "./helpers.js";
+import { getBucketByFilename, getLegacyFilesByGlobs, getModuleId, resolveModule} from "./helpers.js";
 import vueSfcHandler from "./vue/vue-sfc-handler.js";
 import { builtIns, supportedGlobals } from "./node/polyfills.js";
 import _keyBy from "lodash/keyBy.js";
@@ -33,6 +33,7 @@ const paths =  { publicDir, registryPath, idsPath, clientEnvPath };
 //   .concat(layoutClientsSrc)
 //   .concat(layoutModelsSrc);
 //   .concat(kilnPluginsGlob);
+const legacyFiles = [];
 
 //todo: replace with process.cwd(), hardcoding this for now, also, check helpers.js getModuleId method
 const cwd = '<path to your project>';
@@ -89,6 +90,16 @@ const bucketsConfig = {
 
 // temp init method
 async function init(watch = false) {
+  // todo:
+  // the list of globs is expected to be received either as a CLI option or as an Env Var
+  // hardcoding one for now as the above is still TBD
+  const tmpLegacyFiles = await getLegacyFilesByGlobs(['global/js/**/!(*.test).js']);
+
+  if (tmpLegacyFiles.length) {
+    legacyFiles.push(...tmpLegacyFiles);
+    entryFiles.push(...tmpLegacyFiles);
+  }
+
   try {
     if (watch) {
       // watch
@@ -177,7 +188,7 @@ async function processModule(filePath, cachedIds, registry, ids, envs) {
 
     moduleId = cachedIds.get(filePath);
   } else {
-    moduleId = getModuleId(filePath);
+    moduleId = getModuleId(filePath, legacyFiles);
     cachedIds.set(filePath, moduleId);
   }
 
@@ -359,7 +370,7 @@ async function processReplacements(replacementTasks = [], s, toProcess, cachedId
     let dependencyId;
 
     if (!cachedIds.has(resolvedPath)) {
-      dependencyId = getModuleId(resolvedPath);
+      dependencyId = getModuleId(resolvedPath, legacyFiles);
       cachedIds.set(resolvedPath, dependencyId);
       toProcess.push(resolvedPath);
     } else {
