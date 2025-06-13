@@ -1,5 +1,6 @@
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import * as esbuild from 'esbuild';
 import fs from 'fs-extra';
 import { globby } from "globby";
@@ -12,6 +13,9 @@ import vueSfcHandler from "./vue/vue-sfc-handler.js";
 import { builtIns, supportedGlobals } from "./node/polyfills.js";
 import _keyBy from "lodash/keyBy.js";
 import _isFinite from "lodash/isFinite.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const publicDir = path.resolve(process.cwd(), 'public', 'js');
 const registryPath = path.join(publicDir, '_registry.json');
@@ -90,6 +94,11 @@ const bucketsConfig = {
 
 // temp init method
 async function init(watch = false) {
+
+  // copy static files to the public directory.
+  // by using copy, it creates the public directory if it does not exist
+  await processStaticFiles();
+
   // todo:
   // the list of globs is expected to be received either as a CLI option or as an Env Var
   // hardcoding one for now as the above is still TBD
@@ -545,6 +554,28 @@ async function processBuckets() {
 
       await fs.writeFile(filePath, content);
     }
+  }
+}
+
+/**
+ * Processes static files by copying them from their source locations to the public directory.
+ *
+ * This function searches for static JavaScript files in a specified directory and
+ * also includes files matching a specific pattern within the `clay-kiln` module.
+ * The resulting files are then copied to the designated public directory for use.
+ *
+ * note: Logic in claycli indicates that these files need to be watched, but I haven't detected a use case in which
+ * we actually need to do that, so, just copying them for now.
+ * @return {Promise<void>}
+ */
+async function processStaticFiles() {
+  const cwd = '<path to your project>'; // todo: replace with process.cwd()
+  const kilnGlob = path.join(cwd, 'node_modules/clay-kiln/dist/clay-kiln-@(edit|view).js');
+  const staticGlob = path.join(__dirname, 'static', '*.js');
+  const staticFilesSrc = (await globby(staticGlob)).concat((await globby(kilnGlob)));
+
+  for (const filePath of staticFilesSrc) {
+    fs.copy(filePath, path.join(publicDir, path.basename(filePath)));
   }
 }
 
