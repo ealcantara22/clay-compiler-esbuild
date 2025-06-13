@@ -572,10 +572,19 @@ async function processStaticFiles() {
   const cwd = '<path to your project>'; // todo: replace with process.cwd()
   const kilnGlob = path.join(cwd, 'node_modules/clay-kiln/dist/clay-kiln-@(edit|view).js');
   const staticGlob = path.join(__dirname, 'static', '*.js');
-  const staticFilesSrc = (await globby(staticGlob)).concat((await globby(kilnGlob)));
+  const staticFilesSrc = (await globby(kilnGlob)).concat((await globby(staticGlob)));
 
   for (const filePath of staticFilesSrc) {
-    fs.copy(filePath, path.join(publicDir, path.basename(filePath)));
+    const fileName = path.basename(filePath);
+
+    if (fileName.includes('_client-init')) {
+      let content = await fs.readFile(filePath, 'utf8');
+
+      content = content.replaceAll('#NODE_ENV#', process.env.NODE_ENV || '');
+      await fs.writeFile(path.join(paths.publicDir, fileName), content);
+    } else {
+      fs.copy(filePath, path.join(publicDir, path.basename(filePath)));
+    }
   }
 }
 
