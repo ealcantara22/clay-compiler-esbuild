@@ -5,9 +5,15 @@ import * as esbuild from 'esbuild';
 import fs from 'fs-extra';
 import { globby } from "globby";
 import { parse } from "acorn";
-import { simple, ancestor } from "acorn-walk";
+import { simple } from "acorn-walk";
 import acornGlobals from "acorn-globals";
 import MagicString from "magic-string";
+import postcss from 'postcss';
+import cssImport from 'postcss-import';
+import autoprefixer from 'autoprefixer';
+import mixins from 'postcss-mixins';
+import simpleVars from "postcss-simple-vars";
+import nested from 'postcss-nested'
 import { getBucketByFilename, getLegacyFilesByGlobs, getModuleId, resolveModule} from "./helpers.js";
 import vueSfcHandler from "./vue/vue-sfc-handler.js";
 import { builtIns, supportedGlobals } from "./node/polyfills.js";
@@ -18,6 +24,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const publicDir = path.resolve(process.cwd(), 'public', 'js');
+const kilnPluginCSSDestPath = path.resolve(process.cwd(), 'public', 'css', '_kiln-plugins.css')
 const registryPath = path.join(publicDir, '_registry.json');
 const idsPath = path.join(publicDir, '_ids.json');
 const clientEnvPath = path.join(process.cwd(), 'client-env.json');
@@ -90,7 +97,20 @@ const bucketsConfig = {
     fileName: '_kiln-plugins.js',
     content: ''
   },
+  kilnPluginsCss: {
+    fileName: kilnPluginCSSDestPath,
+    content: ''
+  },
 };
+
+// postcss plugins
+const postcssPlugins = [
+  cssImport(),
+  autoprefixer({overrideBrowserslist: ['> 2%']}),
+  mixins(),
+  simpleVars(),
+  nested()
+]
 
 // temp init method
 async function init(watch = false) {
@@ -232,13 +252,42 @@ async function processModule(filePath, cachedIds, registry, ids, envs) {
       const vueSFC = await vueSfcHandler({
         filename: fileName,
         source: code,
-        extractCss: false, // todo: resolve css
+        extractCss: true,
         production: false,
-        postcssPlugins: [],
-        // assembleOptions,
       });
 
+      // While experimenting with CSS extraction, I noticed that the SFC compiler sometimes does not throw
+      // but collects and returns the errors. This condition helps capture those
+      if (vueSFC.errors?.length > 0) {
+        vueSFC.errors.forEach(error => {
+          console.error(`vue SFC error in: ${filePath}:`);
+          console.error(error.text);
+        })
+
+        // this can be handled better later on, specially, once we decide how we want to handle
+        // kiln plugins assets in watch mode.
+        process.exit(1);
+      }
+
       if (vueSFC.code) code = vueSFC.code;
+
+      // we're processing the extracted CSS code without the SFC compiler as its postcss version is caped to v7
+      // causing issues with several plugins that requires v8. We do get some CSS related-issues detection through the
+      // compiler, but for styles its main purpose is just extracting the CSS so we can post-process it with postcss@8.
+      // (see https://github.com/vuejs/component-compiler-utils/blob/master/package.json#L63)
+      if (vueSFC.styles?.length > 0) {
+        let fileStyle = ''
+
+        for (const style of vueSFC.styles) {
+          fileStyle += (style.code || '').trim();
+        }
+
+        if (fileStyle) {
+          const processed = await postcss(postcssPlugins).process(fileStyle)
+
+          bucketsConfig.kilnPluginsCss.content += processed;
+        }
+      }
       // if (vueSFC.map) sourceMap = vueSFC.map; // todo
     } catch (e) {
       console.error(`error parsing vue file: ${filePath}`, e);
@@ -520,12 +569,21 @@ async function writeToDisk(filePath, moduleId, content) {
  * @return {Promise<void>} A promise that resolves once all bucket configurations are processed and written to disk.
  */
 async function processBuckets() {
+  // kiln plugins JS
   if (bucketsConfig.kilnPlugins.content) {
     const filePath = path.join(paths.publicDir, bucketsConfig.kilnPlugins.fileName);
 
     await fs.writeFile(filePath, bucketsConfig.kilnPlugins.content);
   }
 
+  // kiln plugins CSS
+  if (bucketsConfig.kilnPluginsCss.content) {
+    const filePath = bucketsConfig.kilnPluginsCss.fileName;
+
+    await fs.writeFile(filePath, bucketsConfig.kilnPluginsCss.content);
+  }
+
+  // model.js
   for (const bucket in bucketsConfig.models) {
     const fileName = bucketsConfig.models[bucket].fileName;
     const content = bucketsConfig.models[bucket].content;
@@ -536,6 +594,7 @@ async function processBuckets() {
     }
   }
 
+  // kiln.js
   for (const bucket in bucketsConfig.kiln) {
     const fileName = bucketsConfig.kiln[bucket].fileName;
     const content = bucketsConfig.kiln[bucket].content;
@@ -546,6 +605,7 @@ async function processBuckets() {
     }
   }
 
+  // <number>.js
   for (const bucket in bucketsConfig.deps) {
     const fileName = bucketsConfig.deps[bucket].fileName;
     const content = bucketsConfig.deps[bucket].content;
