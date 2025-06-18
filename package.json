@@ -35,6 +35,7 @@
     "autoprefixer": "^10.4.20",
     "browserify-zlib": "^0.2.0",
     "buffer": "^6.0.3",
+    "clayhandlebars": "^5.0.2",
     "crypto-browserify": "^3.12.1",
     "esbuild": "0.24.2",
     "esbuild-vue": "^1.2.2",

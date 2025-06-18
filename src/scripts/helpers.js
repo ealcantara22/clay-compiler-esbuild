@@ -18,7 +18,7 @@ export function generateNumericId() {
  */
 export function getModuleId(file = '', legacyFiles = []) {
   //todo: replace with process.cwd(), hardcoding this for now
-  const cwd = '<path to your project>';
+  const cwd = '/Users/ealcantara/Documents/vox/sites';
 
   // todo: revisit, this was copy from clay-cli, but we're going to handle legacyIds resolution a bit differently
 
@@ -145,7 +145,7 @@ export async function getLegacyFilesByGlobs(globs = []) {
   if (!globs.length) return [];
 
   //todo: replace with process.cwd(), hardcoding this for now
-  const cwd = '<path to your project>';
+  const cwd = '/Users/ealcantara/Documents/vox/sites';
   const legacyFiles = [];
 
   for (const glob of globs) {

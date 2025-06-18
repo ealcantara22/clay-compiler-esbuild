@@ -17,6 +17,7 @@ import nested from 'postcss-nested'
 import { getBucketByFilename, getLegacyFilesByGlobs, getModuleId, resolveModule} from "./helpers.js";
 import vueSfcHandler from "./vue/vue-sfc-handler.js";
 import { builtIns, supportedGlobals } from "./node/polyfills.js";
+import { compileTemplate } from './template/index.js';
 import _keyBy from "lodash/keyBy.js";
 import _isFinite from "lodash/isFinite.js";
 
@@ -37,6 +38,8 @@ const paths =  { publicDir, registryPath, idsPath, clientEnvPath };
 // const layoutClientsSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'client.js'));
 // const layoutModelsSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'model.js'));
 // const kilnPluginsGlob = await globby(path.join(process.cwd(), 'services', 'kiln', 'index.js'));
+// const componentTemplatesSrc = await globby(path.join(process.cwd(), 'components', '**', 'template.+(hbs|handlebars)'));
+// const layoutTemplatesSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'template.+(hbs|handlebars)'));
 // const entryFiles = []
 //   .concat(componentClientsSrc)
 //   .concat(componentModelsSrc)
@@ -44,6 +47,8 @@ const paths =  { publicDir, registryPath, idsPath, clientEnvPath };
 //   .concat(layoutClientsSrc)
 //   .concat(layoutModelsSrc);
 //   .concat(kilnPluginsGlob);
+//   .concat(componentTemplatesSrc);
+//   .concat(layoutTemplatesSrc);
 const legacyFiles = [];
 
 //todo: replace with process.cwd(), hardcoding this for now, also, check helpers.js getModuleId method
@@ -92,6 +97,14 @@ const bucketsConfig = {
     'm-p': { fileName: '_models-m-p.js', content: '' },
     'q-t': { fileName: '_models-q-t.js', content: '' },
     'u-z': { fileName: '_models-u-z.js', content: '' },
+  },
+  templates: {
+    'a-d': { fileName: '_templates-a-d.js', content: '' },
+    'e-h': { fileName: '_templates-e-h.js', content: '' },
+    'i-l': { fileName: '_templates-i-l.js', content: '' },
+    'm-p': { fileName: '_templates-m-p.js', content: '' },
+    'q-t': { fileName: '_templates-q-t.js', content: '' },
+    'u-z': { fileName: '_templates-u-z.js', content: '' },
   },
   kilnPlugins: {
     fileName: '_kiln-plugins.js',
@@ -172,10 +185,23 @@ function clayScriptPlugin(options = {}) {
       build.onResolve({ filter:/.*/ }, async (args) => {
         const filePath = args.path;
 
+        // handlebar templates are handled onLoad
+        if (filePath.endsWith('.handlebars') || filePath.endsWith('.hbs')) return null;
+
         await processModule(filePath, cachedIds, registry, ids, envs);
 
         return null;
       });
+
+      build.onLoad({ filter: /\.(hbs|handlebars)$/i }, async (args) => {
+        const filePath = args.path;
+
+        const res = await compileTemplate(filePath);
+
+        await writeToDisk(filePath, res.moduleId, res.content);
+
+        return { contents: res.content };
+      })
 
       build.onEnd(async () => {
         // called after build is complete, write registry and ids to disk
@@ -539,7 +565,7 @@ async function writeToDisk(filePath, moduleId, content) {
     return;
   }
 
-  // write <name(.model|.client|.kiln)/number>.js
+  // write <name(.model|.client|.kiln|.template)/number>.js
   await fs.writeFile(path.join(paths.publicDir, `${moduleId}.js`), content);
 
   if (moduleId.toString().endsWith('.kiln')) {
@@ -552,6 +578,11 @@ async function writeToDisk(filePath, moduleId, content) {
     const bucket = getBucketByFilename(moduleId);
 
     bucketsConfig.models[bucket].content += content;
+  } else if (moduleId.toString().endsWith('.template')) {
+    // template files are compiled to <name>.template.js and _templates-<letter>-<letter>.js
+    const bucket = getBucketByFilename(moduleId);
+
+    bucketsConfig.templates[bucket].content += content;
   } else if (_isFinite(parseInt(moduleId))){
     // dependency buckets, deps get put into <number>.js and _deps-<letter>-<letter>.js
     const name = path.parse(filePath).name;
@@ -587,6 +618,17 @@ async function processBuckets() {
   for (const bucket in bucketsConfig.models) {
     const fileName = bucketsConfig.models[bucket].fileName;
     const content = bucketsConfig.models[bucket].content;
+    if (content) {
+      const filePath = path.join(paths.publicDir, fileName);
+
+      await fs.writeFile(filePath, content);
+    }
+  }
+
+  // templates.js
+  for (const bucket in bucketsConfig.templates) {
+    const fileName = bucketsConfig.templates[bucket].fileName;
+    const content = bucketsConfig.templates[bucket].content;
     if (content) {
       const filePath = path.join(paths.publicDir, fileName);
 
