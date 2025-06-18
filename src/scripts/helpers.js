@@ -17,13 +17,8 @@ export function generateNumericId() {
  * @return {string|undefined} module id
  */
 export function getModuleId(file = '', legacyFiles = []) {
-  //todo: replace with process.cwd(), hardcoding this for now
-  const cwd = '/Users/ealcantara/Documents/vox/sites';
-
-  // todo: revisit, this was copy from clay-cli, but we're going to handle legacyIds resolution a bit differently
-
   const name = file.split('/').slice(-2)[0];
-  const isKilnPlugin = file.includes(path.join(cwd, 'services', 'kiln'));
+  const isKilnPlugin = file.includes(path.join(process.cwd(), 'services', 'kiln'));
   const isLegacyFile = legacyFiles.includes(file);
   const fileTypes = ['client', 'kiln', 'model'];
 
@@ -32,7 +27,7 @@ export function getModuleId(file = '', legacyFiles = []) {
     return `${ _last(parsedPath.dir.split(path.sep))}_${parsedPath.name}.kilnplugin`;
   } else if (isLegacyFile) {
     return `${path.parse(file).name}.legacy`;
-  } else if (file.includes(path.join(cwd, 'components'))) {
+  } else if (file.includes(path.join(process.cwd(), 'components'))) {
     for (let fileType of fileTypes) {
       if (file.endsWith(`${fileType}.js`)) {
         return `${name}.${fileType}`;
@@ -144,36 +139,13 @@ export function getBucketByFilename(name) {
 export async function getLegacyFilesByGlobs(globs = []) {
   if (!globs.length) return [];
 
-  //todo: replace with process.cwd(), hardcoding this for now
-  const cwd = '/Users/ealcantara/Documents/vox/sites';
   const legacyFiles = [];
 
   for (const glob of globs) {
-    const filePaths = await globby(path.join(cwd, glob));
+    const filePaths = await globby(path.join(process.cwd(), glob));
 
     legacyFiles.push(...filePaths);
   }
 
   return legacyFiles;
-}
-
-/**
- * Replicate getOutfile logic
- * // todo: revisit to include the rest of use cases, check clay-cli's getOutfile
- */
-export function getOutputPath(filePath, moduleId) {
-  const destPath = path.resolve(process.cwd(), 'public', 'js');
-  const moduleIdStr = (moduleId || '').toString();
-
-  if (moduleIdStr.endsWith('.kilnplugin')) {
-    return path.join(destPath, '_kiln-plugins.js');
-  } else if (moduleIdStr.endsWith('.legacy')) {
-    return path.join(destPath, `${moduleIdStr}.js`);
-  } else if (moduleIdStr.endsWith('.model')) {
-    return path.join(destPath, `${moduleIdStr}.js`);
-  } else if (moduleIdStr.endsWith('.client')) {
-    return path.join(destPath, `${moduleIdStr}.js`);
-  } else {
-    return path.join(destPath, `${moduleIdStr}.js`);
-  }
 }

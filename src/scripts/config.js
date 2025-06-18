@@ -32,30 +32,24 @@ const clientEnvPath = path.join(process.cwd(), 'client-env.json');
 const paths =  { publicDir, registryPath, idsPath, clientEnvPath };
 
 // globs: commented for now, as we're on early development
-// const componentClientsSrc = await globby(path.join(process.cwd(), 'components', '**', 'client.js'));
-// const componentModelsSrc = await globby(path.join(process.cwd(), 'components', '**', 'model.js'));
-// const componentKilnGlob = await globby(path.join(process.cwd(), 'components', '**', 'kiln.js'));
-// const layoutClientsSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'client.js'));
-// const layoutModelsSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'model.js'));
-// const kilnPluginsGlob = await globby(path.join(process.cwd(), 'services', 'kiln', 'index.js'));
-// const componentTemplatesSrc = await globby(path.join(process.cwd(), 'components', '**', 'template.+(hbs|handlebars)'));
-// const layoutTemplatesSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'template.+(hbs|handlebars)'));
-// const entryFiles = []
-//   .concat(componentClientsSrc)
-//   .concat(componentModelsSrc)
-//   .concat(componentKilnGlob)
-//   .concat(layoutClientsSrc)
-//   .concat(layoutModelsSrc);
-//   .concat(kilnPluginsGlob);
-//   .concat(componentTemplatesSrc);
-//   .concat(layoutTemplatesSrc);
+const componentClientsSrc = await globby(path.join(process.cwd(), 'components', '**', 'client.js'));
+const componentModelsSrc = await globby(path.join(process.cwd(), 'components', '**', 'model.js'));
+const componentKilnGlob = await globby(path.join(process.cwd(), 'components', '**', 'kiln.js'));
+const layoutClientsSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'client.js'));
+const layoutModelsSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'model.js'));
+const kilnPluginsGlob = await globby(path.join(process.cwd(), 'services', 'kiln', 'index.js'));
+const componentTemplatesSrc = await globby(path.join(process.cwd(), 'components', '**', 'template.+(hbs|handlebars)'));
+const layoutTemplatesSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'template.+(hbs|handlebars)'));
+const entryFiles = []
+  .concat(componentClientsSrc)
+  .concat(componentModelsSrc)
+  .concat(componentKilnGlob)
+  .concat(layoutClientsSrc)
+  .concat(layoutModelsSrc)
+  .concat(kilnPluginsGlob)
+  .concat(componentTemplatesSrc)
+  .concat(layoutTemplatesSrc);
 const legacyFiles = [];
-
-//todo: replace with process.cwd(), hardcoding this for now, also, check helpers.js getModuleId method
-const cwd = '<path to your project>';
-const entryFiles = [
-  path.join(cwd, 'components', 'my-test-component', 'client.js'), // todo: replace with your actual component
-]
 
 let isWatching = false;
 
@@ -146,6 +140,9 @@ async function init(watch = false) {
     if (watch) {
       // watch
       const context = await esbuild.context(config);
+
+      isWatching = true
+
       console.log('watching ...');
       await context.watch()
     } else {
@@ -213,10 +210,6 @@ function clayScriptPlugin(options = {}) {
 
         // write each bucket content to disk
         await processBuckets();
-
-        // watch works, but it needs to by pass the cached Ids
-        // to test, watch mode, uncomment the line below, and call init(true)
-        // isWatching = true
       });
     }
   }
@@ -518,9 +511,6 @@ async function handleFileContentWithGlobals(filePath, globals, ids) {
   let prepend = `(function (${globals.join(',')}){(function (){`;
   let append = '}).call(this)}).call(this,';
 
-  // todo: change, use process.cwd
-  const cwd = '<path to your project>';
-
   globals.forEach((item, index, arr) => {
     const isLast = (arr.length === index + 1);
 
@@ -533,11 +523,11 @@ async function handleFileContentWithGlobals(filePath, globals, ids) {
     }
 
     if (item === '__filename') {
-      append += `"/${path.relative(cwd, filePath)}"`;
+      append += `"/${path.relative(process.cwd(), filePath)}"`;
     }
 
     if (item === '__dirname') {
-      append += `"/${path.dirname(path.relative(cwd, filePath))}"`;
+      append += `"/${path.dirname(path.relative(process.cwd(), filePath))}"`;
     }
 
     if (!isLast) append += ',';
@@ -671,8 +661,7 @@ async function processBuckets() {
  * @return {Promise<void>}
  */
 async function processStaticFiles() {
-  const cwd = '<path to your project>'; // todo: replace with process.cwd()
-  const kilnGlob = path.join(cwd, 'node_modules/clay-kiln/dist/clay-kiln-@(edit|view).js');
+  const kilnGlob = path.join(process.cwd(), 'node_modules/clay-kiln/dist/clay-kiln-@(edit|view).js');
   const staticGlob = path.join(__dirname, 'static', '*.js');
   const staticFilesSrc = (await globby(kilnGlob)).concat((await globby(staticGlob)));
 
