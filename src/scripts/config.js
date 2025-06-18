@@ -120,7 +120,7 @@ const postcssPlugins = [
 ]
 
 // temp init method
-async function init(watch = false) {
+export async function init(watch = false) {
 
   // copy static files to the public directory.
   // by using copy, it creates the public directory if it does not exist
@@ -678,5 +678,3 @@ async function processStaticFiles() {
     }
   }
 }
-
-await init()
