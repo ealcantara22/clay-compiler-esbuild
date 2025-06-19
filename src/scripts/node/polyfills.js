@@ -23,6 +23,7 @@ const require = createRequire(import.meta.url);
  * @property {string} dns - Path to an empty implementation for `dns`.
  * @property {string} events - Path to the browser-compatible `events` module.
  * @property {string} fs - Path to an empty implementation for `fs`.
+ * @property {string} http - Path to the browser-compatible `stream-http` module.
  * @property {string} http2 - Path to an empty implementation for `http2`.
  * @property {string} https - Path to the browser-compatible `https-browserify` module.
  * @property {string} net - Path to an empty implementation for `net`.
@@ -37,6 +38,7 @@ const require = createRequire(import.meta.url);
  * @property {string} zlib - Path to the browser-compatible `browserify-zlib` module.
  * @property {string} vm - Path to the browser-compatible `vm-browserify` module.
  * @property {string} sys - Path to the browser-compatible `util` module (legacy alias).
+ * @property {string} url - Path to the browser-compatible `url` module.
  * @property {string} util - Path to the browser-compatible `util` module.
  */
 export const builtIns = {
@@ -49,6 +51,7 @@ export const builtIns = {
   dns: require.resolve('./_empty.js'),
   events: require.resolve('events/'),
   fs: require.resolve('./_empty.js'),
+  http: require.resolve('stream-http'),
   http2: require.resolve('./_empty.js'),
   https: require.resolve('https-browserify'),
   net: require.resolve('./_empty.js'),
@@ -63,6 +66,7 @@ export const builtIns = {
   zlib: require.resolve('browserify-zlib'),
   vm: require.resolve('vm-browserify'),
   sys: require.resolve('util/util.js'),
+  url: require.resolve('url/'),
   util: require.resolve('util/util.js'),
 }
 

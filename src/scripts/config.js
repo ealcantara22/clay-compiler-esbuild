@@ -14,7 +14,8 @@ import autoprefixer from 'autoprefixer';
 import mixins from 'postcss-mixins';
 import simpleVars from "postcss-simple-vars";
 import nested from 'postcss-nested'
-import { getBucketByFilename, getLegacyFilesByGlobs, getModuleId, resolveModule} from "./helpers.js";
+import { ResolverFactory } from 'oxc-resolver'
+import { getBucketByFilename, getLegacyFilesByGlobs, getModuleId } from "./helpers.js";
 import vueSfcHandler from "./vue/vue-sfc-handler.js";
 import { builtIns, supportedGlobals } from "./node/polyfills.js";
 import { compileTemplate } from './template/index.js';
@@ -54,6 +55,11 @@ const legacyFiles = [];
 let isWatching = false;
 
 const nodeBuiltIns = Object.keys(builtIns);
+// oxc-resolver config
+const resolver = new ResolverFactory({
+  conditionNames: ['node', 'require'],
+  mainFields: ['browser', 'module', 'main'], // Order matters, keep browser first
+});
 // esbuild config
 const config = {
   entryPoints: entryFiles,
@@ -248,7 +254,13 @@ async function processModule(filePath, cachedIds, registry, ids, envs) {
   try {
     code = await fs.readFile(filePath, 'utf8');
   } catch (e) {
-    console.error(`error reading file: ${filePath}`, e);
+    // xregexp, md5.js, and html-to-text resolves to their directories for some reason
+    if (e.code === 'EISDIR' && filePath.includes('/node_modules/')) {
+      console.log('skipping directory: ', filePath);
+      // delete ids[filePath];
+      // delete registry[moduleId];
+    }
+    // console.error(`error reading file: ${filePath}`, e);
   }
 
   if (!code) return;
@@ -428,11 +440,20 @@ async function processModule(filePath, cachedIds, registry, ids, envs) {
  */
 async function processReplacements(replacementTasks = [], s, toProcess, cachedIds, registry) {
   for (const task of replacementTasks) {
-    const { basedir, moduleId, node, requirePath } = task;
+    const {basedir, moduleId, node, requirePath} = task;
 
-    let resolvedPath = resolveModule(requirePath, basedir);
+    const resolveRes = await resolver.async(basedir, requirePath)
 
-    if (!resolvedPath) return;
+    if (!resolveRes.path) {
+      console.error(`
+        Could not resolved path for ${requirePath}, check your require() statements.
+        If the required module is a node built-in install its polyfill, and list it in the polyfills array.
+        see https://github.com/browserify/browserify/blob/master/lib/builtins.js for compatible polyfills.
+      `);
+      process.exit(1);
+    }
+
+    let resolvedPath = resolveRes.path
 
     if (resolvedPath.includes('/services/server')) {
       resolvedPath = resolvedPath.replace('/services/server', '/services/client');
