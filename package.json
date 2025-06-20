@@ -1,6 +1,6 @@
 {
   "name": "@enercido/clay-compiler-esbuild",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -55,6 +55,7 @@
     "postcss-nested": "^7.0.2",
     "postcss-simple-vars": "^7.0.1",
     "process": "^0.11.10",
+    "readable-stream": "^4.7.0",
     "stream-browserify": "^3.0.0",
     "stream-http": "^3.2.0",
     "timers-browserify": "^2.0.12",

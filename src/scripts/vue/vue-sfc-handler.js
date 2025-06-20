@@ -1,30 +1,7 @@
-// the entire content of this file was copied from
-// https://github.com/apeschar/esbuild-vue/blob/master/src/worker.js
+// most of this file content was copied from https://github.com/apeschar/esbuild-vue/blob/master/src/worker.js
+import esbuild from 'esbuild';
 
 let usedFiles;
-let requireDepth = 0;
-
-// editModule("module", (mdl) => {
-//   mdl.prototype.require = new Proxy(mdl.prototype.require, {
-//     apply(target, thisArg, args) {
-//       requireDepth++;
-//       try {
-//         return Reflect.apply(target, thisArg, args);
-//       } finally {
-//         requireDepth--;
-//       }
-//     },
-//   });
-// });
-//
-// editModule("fs", (fs) => {
-//   fs.readFileSync = new Proxy(fs.readFileSync, {
-//     apply(target, thisArg, args) {
-//       if (usedFiles && requireDepth === 0) usedFiles.add(args[0]);
-//       return Reflect.apply(target, thisArg, args);
-//     },
-//   });
-// });
 
 import componentCompiler from "@vue/component-compiler";
 import { generateCodeFrame } from "vue-template-compiler"
@@ -36,7 +13,6 @@ export default async ({
   extractCss,
   production,
   postcssPlugins,
-  assembleOptions,
 }) => {
   const compilerOptions = {
     template: {
@@ -70,15 +46,44 @@ export default async ({
       }
     }
 
-    const { code } = componentCompiler.assemble(
-      compiler,
-      filename,
-      result,
-      assembleOptions
-    );
+    // --- Custom Assembly Logic to mimic Vueify ---
+    // the compiler assembler is responsible for merging all the SFC pieces, but its output is set to ESM by default
+    // with no option to override. The browser doesn't like ESM modules so we need a custom assembler logic to
+    // generate an output similar to Vueify. see https://github.com/vuejs/vueify/blob/master/lib/compiler.js
+    let scriptContent = result.script ? result.script.code : 'module.exports = {};';
+    let templateCode = result.template?.code || '';
+
+    // ironic, but it is possible to have ESM Vue SFC files, this conditions uses esbuild to transform those to CJS
+    // but, only the code between the script tags.
+    if (scriptContent.includes('export default')) {
+      scriptContent = (await esbuild.transform(scriptContent, { format: 'cjs', target: 'es2015'})).code
+    }
+
+    // Now, manually construct the `vueify`-like output
+    templateCode = templateCode.replace(/var render =/, '__vue__options__.render =');
+    templateCode = templateCode.replace(/render._withStripped =/, '__vue__options__.render._withStripped =');
+    templateCode = templateCode.replace(/var staticRenderFns =/, '__vue__options__.staticRenderFns =');
+
+    let customAssembledCode = `
+      !function() {
+        ${scriptContent}
+      }()
+
+      // Handle ES module default export conversion if necessary
+      module.exports.__esModule && (module.exports = module.exports.default);
+
+      var __vue__options__ = "function" == typeof module.exports ? module.exports.options : module.exports;
+
+      // Inject compiled template render functions
+      ${templateCode}
+
+      if (${JSON.stringify(result.scopeId)}) {
+        __vue__options__._scopeId = ${JSON.stringify(result.scopeId)};
+      }
+    `;
 
     return {
-      code,
+      code: customAssembledCode,
       styles,
       usedFiles,
       loader: result.script ? result.script.lang : undefined,

@@ -32,7 +32,6 @@ const idsPath = path.join(publicDir, '_ids.json');
 const clientEnvPath = path.join(process.cwd(), 'client-env.json');
 const paths =  { publicDir, registryPath, idsPath, clientEnvPath };
 
-// globs: commented for now, as we're on early development
 const componentClientsSrc = await globby(path.join(process.cwd(), 'components', '**', 'client.js'));
 const componentModelsSrc = await globby(path.join(process.cwd(), 'components', '**', 'model.js'));
 const componentKilnGlob = await globby(path.join(process.cwd(), 'components', '**', 'kiln.js'));
@@ -58,7 +57,7 @@ const nodeBuiltIns = Object.keys(builtIns);
 // oxc-resolver config
 const resolver = new ResolverFactory({
   conditionNames: ['node', 'require'],
-  mainFields: ['browser', 'module', 'main'], // Order matters, keep browser first
+  mainFields: ['browser', 'main'], // Order matters, keep browser first
 });
 // esbuild config
 const config = {
@@ -254,13 +253,7 @@ async function processModule(filePath, cachedIds, registry, ids, envs) {
   try {
     code = await fs.readFile(filePath, 'utf8');
   } catch (e) {
-    // xregexp, md5.js, and html-to-text resolves to their directories for some reason
-    if (e.code === 'EISDIR' && filePath.includes('/node_modules/')) {
-      console.log('skipping directory: ', filePath);
-      // delete ids[filePath];
-      // delete registry[moduleId];
-    }
-    // console.error(`error reading file: ${filePath}`, e);
+    console.error(`error reading file: ${filePath}`, e);
   }
 
   if (!code) return;
@@ -360,12 +353,22 @@ async function processModule(filePath, cachedIds, registry, ids, envs) {
             const builtInPath = builtIns[requirePath];
             const builtInId = ids[builtInPath];
 
+            if (!builtInId) {
+              console.error(`CRITICAL: Built-in polyfill ID for '${requirePath}' (path: ${requirePath}) is undefined. ${filePath}.`);
+              process.exit(1);
+            }
+
             // Replace 'require' builtin with 'require(< builtIn polyfill ID>)'
             s.overwrite(node.start, node.end, `require(${builtInId})`);
+
+            // list the builtin as module dependency
+            replacementTasks.push({ isBuiltin: true, moduleId, builtInId });
+
             return; // return as builtins don't have dependencies
           }
 
           replacementTasks.push({
+            isBuiltin: false,
             basedir,
             moduleId,
             node,
@@ -408,13 +411,15 @@ async function processModule(filePath, cachedIds, registry, ids, envs) {
 
     prependContent += prepend;
     appendContent += append;
+
+    await ensureGlobalsAsDependencies(moduleId, foundSupportedGlobals, ids, registry)
   }
 
   // prepend and append the browserify module header and footer
   const dependencies = registry[moduleId];
   const dependenciesObj = _keyBy(dependencies || [], (number) => number.toString());
 
-  appendContent += `}, ${JSON.stringify(dependenciesObj)}];`;
+  appendContent += `\n}, ${JSON.stringify(dependenciesObj)}];\n`;
 
   s.prepend(prependContent);
   s.append(appendContent);
@@ -440,7 +445,15 @@ async function processModule(filePath, cachedIds, registry, ids, envs) {
  */
 async function processReplacements(replacementTasks = [], s, toProcess, cachedIds, registry) {
   for (const task of replacementTasks) {
-    const {basedir, moduleId, node, requirePath} = task;
+    const {basedir, moduleId, node, requirePath, isBuiltin, builtInId } = task;
+
+    // register found builtin as a dependency
+    if (isBuiltin) {
+      if (!registry[moduleId].includes(builtInId))
+        registry[moduleId].push(builtInId);
+
+      continue;
+    }
 
     const resolveRes = await resolver.async(basedir, requirePath)
 
@@ -479,7 +492,7 @@ async function processReplacements(replacementTasks = [], s, toProcess, cachedId
       registry[moduleId].push(dependencyId);
 
     // Replace 'require' with 'require(<module ID>)'
-    const requireText = dependencyId.toString().endsWith('.kilnplugin')
+    const requireText = !_isFinite(parseInt(dependencyId))
       ? `require("${dependencyId}")`
       : `require(${dependencyId})`;
 
@@ -529,8 +542,8 @@ async function registerGlobalsAndBuiltInsPolyfills(cachedIds, registry, ids, env
  * which represent the constructed wrapper strings for the file content.
  */
 async function handleFileContentWithGlobals(filePath, globals, ids) {
-  let prepend = `(function (${globals.join(',')}){(function (){`;
-  let append = '}).call(this)}).call(this,';
+  let prepend = `\n(function (${globals.join(',')}){(function (){`;
+  let append = '\n}).call(this)}).call(this,';
 
   globals.forEach((item, index, arr) => {
     const isLast = (arr.length === index + 1);
@@ -549,6 +562,10 @@ async function handleFileContentWithGlobals(filePath, globals, ids) {
 
     if (item === '__dirname') {
       append += `"/${path.dirname(path.relative(process.cwd(), filePath))}"`;
+    }
+
+    if (item === 'global') {
+      append += `typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {}`;
     }
 
     if (!isLast) append += ',';
@@ -696,6 +713,26 @@ async function processStaticFiles() {
       await fs.writeFile(path.join(paths.publicDir, fileName), content);
     } else {
       fs.copy(filePath, path.join(publicDir, path.basename(filePath)));
+    }
+  }
+}
+
+/**
+ * Pushes the process global ID to the module dependency array
+ * @param {string|number}moduleId
+ * @param {string[]} globals
+ * @param {Object<string, number>} ids
+ * @param {Object} registry
+ * @returns {Promise<void>}
+ */
+async function ensureGlobalsAsDependencies(moduleId, globals, ids, registry) {
+  const processId = ids[builtIns.process];
+
+  if (globals.includes('process') && !registry[moduleId].includes(processId)) {
+    if (!ids[builtIns.process]) {
+      console.error('process module not available')
+    } else {
+      registry[moduleId].push(processId)
     }
   }
 }

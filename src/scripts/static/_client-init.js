@@ -8,6 +8,7 @@
 function mountLegacyServices() {
   Object.keys(window.modules)
     .filter((key) => typeof key === 'string' && key.match(/\.legacy$/))
+    .sort()
     .forEach((key) => window.require(key));
 }
 
