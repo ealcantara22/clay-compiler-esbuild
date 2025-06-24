@@ -9,7 +9,8 @@
   "keywords": [
     "esbuild",
     "clay",
-    "postcss"
+    "postcss",
+    "vue"
   ],
   "author": {
     "name": "Enercido ALcantara"

@@ -1,7 +1,7 @@
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import * as esbuild from 'esbuild';
+import esbuild from 'esbuild';
 import fs from 'fs-extra';
 import { globby } from "globby";
 import { parse } from "acorn";
@@ -49,7 +49,10 @@ const entryFiles = []
   .concat(kilnPluginsGlob)
   .concat(componentTemplatesSrc)
   .concat(layoutTemplatesSrc);
-const legacyFiles = [];
+
+const legacyGlobsEnv = process.env.CLAY_COMPILER_LEGACY_GLOBS;
+const legacyGlobs = legacyGlobsEnv ? legacyGlobsEnv.trim().split(',') : []
+const legacyFiles = []; //resolved legacy files
 
 let isWatching = false;
 
@@ -124,39 +127,34 @@ const postcssPlugins = [
   nested()
 ]
 
-// temp init method
-export async function init(watch = false) {
+// main module method
+export default async function compileScripts(options = {}) {
 
   // copy static files to the public directory.
   // by using copy, it creates the public directory if it does not exist
   await processStaticFiles();
 
-  // todo:
-  // the list of globs is expected to be received either as a CLI option or as an Env Var
-  // hardcoding one for now as the above is still TBD
-  const tmpLegacyFiles = await getLegacyFilesByGlobs(['global/js/**/!(*.test).js']);
+  // process legacy files
+  if (legacyGlobs.length) {
+    const tmpLegacyFiles = await getLegacyFilesByGlobs(legacyGlobs);
 
-  if (tmpLegacyFiles.length) {
-    legacyFiles.push(...tmpLegacyFiles);
-    entryFiles.push(...tmpLegacyFiles);
+    if (tmpLegacyFiles.length) {
+      legacyFiles.push(...tmpLegacyFiles);
+      entryFiles.push(...tmpLegacyFiles);
+    }
   }
 
   try {
-    if (watch) {
-      // watch
+    if (options.watch) {
       const context = await esbuild.context(config);
+      await context.watch();
 
       isWatching = true
-
-      console.log('watching ...');
-      await context.watch()
     } else {
-      // build
       await esbuild.build(config);
-      console.log('success...')
     }
   } catch (error) {
-    console.error(error);
+    console.error(`error processing scripts:`, e);
   }
 }
 

@@ -2,18 +2,17 @@ import path from "node:path";
 import process from "node:process";
 import { globby } from "globby";
 
-const cwd = process.cwd();
-const outdir = path.join(cwd, 'public', 'media');
+const outdir = path.join(process.cwd(), 'public', 'media');
 const mediaGlobs = '*.+(jpg|jpeg|png|gif|webp|svg|ico)';
 const modules = {
   components: {
-    path: path.join(cwd, 'components'),
-    src: globby(path.join(cwd, 'components', '**', 'media', mediaGlobs)),
+    path: path.join(process.cwd(), 'components'),
+    src: globby(path.join(process.cwd(), 'components', '**', 'media', mediaGlobs)),
   },
   sites: {
-    path: path.join(cwd, 'sites'),
+    path: path.join(process.cwd(), 'sites'),
     src: globby([
-      path.join(cwd, 'sites', '**', 'media', mediaGlobs),
+      path.join(process.cwd(), 'sites', '**', 'media', mediaGlobs),
     ]),
   }
 }

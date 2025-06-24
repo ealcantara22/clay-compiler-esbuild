@@ -1,7 +1,7 @@
 import path from "node:path";
 import process from "node:process";
-import _last from 'lodash/last.js';
 import { globby } from "globby";
+import _last from 'lodash/last.js';
 
 let numericIdCounter = 1;
 
