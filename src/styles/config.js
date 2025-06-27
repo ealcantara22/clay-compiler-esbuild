@@ -7,6 +7,7 @@ import autoprefixer from 'autoprefixer';
 import mixins from 'postcss-mixins';
 import simpleVars from "postcss-simple-vars";
 import nested from 'postcss-nested'
+import esbuild from 'esbuild';
 
 const outdir = path.join(process.cwd(), 'public', 'css');
 const cssImportPath = path.join(process.cwd(), 'styleguides')
@@ -42,7 +43,7 @@ const formatEntryPoint = (filePath) => {
   }
 }
 
-export const stylesConfig = {
+const stylesConfig = {
   entryPoints: componentsSrc.concat(layoutsSrc).map(entry => formatEntryPoint(entry)),
   outdir,
   bundle: true,
@@ -59,4 +60,19 @@ export const stylesConfig = {
       ]
     }),
   ],
+}
+
+export default async function compileStyles(options = {}) {
+  try {
+    if (options.watch) {
+      const context = await esbuild.context(stylesConfig);
+      await context.watch()
+      console.info('watching styles assets...');
+    } else {
+      await esbuild.build(stylesConfig);
+      console.log('style assets built!')
+    }
+  } catch (e) {
+    console.error(`error processing styles assets:`, e);
+  }
 }

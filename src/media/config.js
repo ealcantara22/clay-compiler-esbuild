@@ -1,6 +1,7 @@
 import path from "node:path";
 import process from "node:process";
 import { globby } from "globby";
+import esbuild from "esbuild";
 
 const outdir = path.join(process.cwd(), 'public', 'media');
 const mediaGlobs = '*.+(jpg|jpeg|png|gif|webp|svg|ico)';
@@ -67,7 +68,7 @@ async function getEntries() {
   }, [])
 }
 
-export const mediaConfig = {
+const mediaConfig = {
   entryPoints: (await getEntries()),
   outdir,
   bundle: true,
@@ -79,5 +80,28 @@ export const mediaConfig = {
     '.png': 'copy',
     '.svg': 'copy',
     '.webp': 'copy',
+  }
+}
+
+/**
+ * Compiles media assets based on the provided configuration.
+ * Supports both build and watch modes.
+ *
+ * @param {Object} [options={}] - Configuration options for compiling media.
+ * @param {boolean} [options.watch] - If true, enables watch mode for media assets.
+ * @return {Promise<void>} A promise that resolves when the media assets are compiled or watched successfully.
+ */
+export default async function compileMedia(options = {}) {
+  try {
+    if (options.watch) {
+      const context = await esbuild.context(mediaConfig);
+      await context.watch()
+      console.info('watching media assets...');
+    } else {
+      await esbuild.build(mediaConfig);
+      console.log('media assets built!')
+    }
+  } catch (e) {
+    console.error(`error processing media assets:`, e);
   }
 }
