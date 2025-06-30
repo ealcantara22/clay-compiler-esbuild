@@ -69,13 +69,6 @@ export function getBucketByFilename(name) {
 export async function getLegacyFilesByGlobs(globs = []) {
   if (!globs.length) return [];
 
-  const legacyFiles = [];
-
-  for (const glob of globs) {
-    const filePaths = await globby(path.join(process.cwd(), glob));
-
-    legacyFiles.push(...filePaths);
-  }
-
-  return legacyFiles;
+  const patterns = globs.map(glob => path.join(process.cwd(), glob));
+  return globby(patterns);
 }

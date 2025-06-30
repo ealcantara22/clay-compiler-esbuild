@@ -1,7 +1,8 @@
-import path from "node:path";
-import process from "node:process";
-import { globby } from "globby";
-import esbuild from "esbuild";
+import path from 'node:path';
+import process from 'node:process';
+import { globby } from 'globby';
+import esbuild from 'esbuild';
+import compiler from '../constants.js'
 
 const outdir = path.join(process.cwd(), 'public', 'media');
 const mediaGlobs = '*.+(jpg|jpeg|png|gif|webp|svg|ico)';
@@ -19,7 +20,7 @@ const modules = {
 }
 
 /**
- * determine filepath for compiled assets, based on the source filepath
+ * determine filePath for compiled assets, based on the source filepath
  * components/<component>/media/<asset-name>.svg
  * becomes public/media/components/<component><asset-name>.svg
  * @param {string} filePath
@@ -68,6 +69,7 @@ async function getEntries() {
   }, [])
 }
 
+// esbuild config for media compilation
 const mediaConfig = {
   entryPoints: (await getEntries()),
   outdir,
@@ -80,20 +82,19 @@ const mediaConfig = {
     '.png': 'copy',
     '.svg': 'copy',
     '.webp': 'copy',
-  }
+  },
+  logLevel: compiler.logLever,
 }
 
 /**
  * Compiles media assets based on the provided configuration.
  * Supports both build and watch modes.
  *
- * @param {Object} [options={}] - Configuration options for compiling media.
- * @param {boolean} [options.watch] - If true, enables watch mode for media assets.
  * @return {Promise<void>} A promise that resolves when the media assets are compiled or watched successfully.
  */
-export default async function compileMedia(options = {}) {
+export default async function compileMedia() {
   try {
-    if (options.watch) {
+    if (compiler.watchMode) {
       const context = await esbuild.context(mediaConfig);
       await context.watch()
       console.info('watching media assets...');

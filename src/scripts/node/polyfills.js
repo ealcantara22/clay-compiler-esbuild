@@ -76,6 +76,7 @@ export const builtIns = {
   tls: require.resolve('./_empty.js'),
   tty: require.resolve('tty-browserify'),
   zlib: require.resolve('browserify-zlib'),
+  domain: require.resolve('domain-browser'),
   sys: require.resolve('util/util.js'),
 }
 

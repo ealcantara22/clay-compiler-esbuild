@@ -1,57 +1,50 @@
-import path from "node:path";
-import process from "node:process";
-import { fileURLToPath } from "node:url";
+import path from 'node:path';
+import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import esbuild from 'esbuild';
 import fs from 'fs-extra';
-import { globby } from "globby";
-import { parse } from "acorn";
-import { simple } from "acorn-walk";
-import acornGlobals from "acorn-globals";
-import MagicString from "magic-string";
+import { globby } from 'globby';
+import { parse } from 'acorn';
+import { simple } from 'acorn-walk';
+import acornGlobals from 'acorn-globals';
+import MagicString from 'magic-string';
 import postcss from 'postcss';
 import cssImport from 'postcss-import';
 import autoprefixer from 'autoprefixer';
 import mixins from 'postcss-mixins';
-import simpleVars from "postcss-simple-vars";
+import simpleVars from 'postcss-simple-vars';
 import nested from 'postcss-nested'
 import { ResolverFactory } from 'oxc-resolver'
-import { getBucketByFilename, getLegacyFilesByGlobs, getModuleId } from "./helpers.js";
-import vueSfcHandler from "./vue/vue-sfc-handler.js";
-import { builtIns, supportedGlobals } from "./node/polyfills.js";
+import _isFinite from 'lodash/isFinite.js';
+import _keyBy from 'lodash/keyBy.js';
+import compiler, { scriptOptions } from '../constants.js'
+import { getBucketByFilename, getLegacyFilesByGlobs, getModuleId } from './helpers.js';
+import vueSfcHandler from './vue/vue-sfc-handler.js';
+import { builtIns, supportedGlobals } from './node/polyfills.js';
 import { compileTemplate } from './template/index.js';
-import _keyBy from "lodash/keyBy.js";
-import _isFinite from "lodash/isFinite.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const publicDir = path.resolve(process.cwd(), 'public', 'js');
-const kilnPluginCSSDestPath = path.resolve(process.cwd(), 'public', 'css', '_kiln-plugins.css')
+const cwd = process.cwd();
+const publicDir = path.resolve(cwd, 'public', 'js');
+const kilnPluginCSSDestPath = path.resolve(cwd, 'public', 'css', '_kiln-plugins.css')
 const registryPath = path.join(publicDir, '_registry.json');
 const idsPath = path.join(publicDir, '_ids.json');
-const clientEnvPath = path.join(process.cwd(), 'client-env.json');
+const clientEnvPath = path.join(cwd, 'client-env.json');
 const paths =  { publicDir, registryPath, idsPath, clientEnvPath };
 
-const componentClientsSrc = await globby(path.join(process.cwd(), 'components', '**', 'client.js'));
-const componentModelsSrc = await globby(path.join(process.cwd(), 'components', '**', 'model.js'));
-const componentKilnGlob = await globby(path.join(process.cwd(), 'components', '**', 'kiln.js'));
-const layoutClientsSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'client.js'));
-const layoutModelsSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'model.js'));
-const kilnPluginsGlob = await globby(path.join(process.cwd(), 'services', 'kiln', 'index.js'));
-const componentTemplatesSrc = await globby(path.join(process.cwd(), 'components', '**', 'template.+(hbs|handlebars)'));
-const layoutTemplatesSrc = await globby(path.join(process.cwd(), 'layouts', '**', 'template.+(hbs|handlebars)'));
-const entryFiles = []
-  .concat(componentClientsSrc)
-  .concat(componentModelsSrc)
-  .concat(componentKilnGlob)
-  .concat(layoutClientsSrc)
-  .concat(layoutModelsSrc)
-  .concat(kilnPluginsGlob)
-  .concat(componentTemplatesSrc)
-  .concat(layoutTemplatesSrc);
+const entryFiles = await globby([
+  path.join(cwd, 'components', '**', 'client.js'),
+  path.join(cwd, 'components', '**', 'model.js'),
+  path.join(cwd, 'components', '**', 'kiln.js'),
+  path.join(cwd, 'components', '**', 'template.+(hbs|handlebars)'),
+  path.join(cwd, 'layouts', '**', 'client.js'),
+  path.join(cwd, 'layouts', '**', 'model.js'),
+  path.join(cwd, 'layouts', '**', 'template.+(hbs|handlebars)'),
+  path.join(cwd, 'services', 'kiln', 'index.js'),
+]);
 
-const legacyGlobsEnv = process.env.CLAY_COMPILER_LEGACY_GLOBS;
-const legacyGlobs = legacyGlobsEnv ? legacyGlobsEnv.trim().split(',') : []
 const legacyFiles = []; //resolved legacy files
 
 let isWatching = false;
@@ -62,7 +55,7 @@ const resolver = new ResolverFactory({
   conditionNames: ['node', 'require'],
   mainFields: ['browser', 'main'], // Order matters, keep browser first
 });
-// esbuild config
+// esbuild config for scripts compilation
 const config = {
   entryPoints: entryFiles,
   bundle: false,
@@ -71,7 +64,8 @@ const config = {
   platform: 'browser',
   outdir: publicDir,
   sourcemap: false,
-  plugins: [ clayScriptPlugin() ]
+  plugins: [ clayScriptPlugin() ],
+  logLevel: compiler.logLever,
 };
 
 // buckets
@@ -121,22 +115,27 @@ const bucketsConfig = {
 // postcss plugins
 const postcssPlugins = [
   cssImport(),
-  autoprefixer({overrideBrowserslist: ['> 2%']}),
+  autoprefixer({ overrideBrowserslist: ['> 2%'] }),
   mixins(),
   simpleVars(),
   nested()
 ]
 
-// main module method
-export default async function compileScripts(options = {}) {
-
+/**
+ * Compiles and processes script files by copying static files to the public directory,
+ * processing legacy script files based on specified globs, and utilizing the esbuild
+ * bundler in either watch mode or build mode.
+ *
+ * @return {Promise} Resolves when the script compilation and processing workflow is completed successfully.
+ */
+export default async function compileScripts() {
   // copy static files to the public directory.
   // by using copy, it creates the public directory if it does not exist
   await processStaticFiles();
 
   // process legacy files
-  if (legacyGlobs.length) {
-    const tmpLegacyFiles = await getLegacyFilesByGlobs(legacyGlobs);
+  if (scriptOptions.legacyGlobs.length) {
+    const tmpLegacyFiles = await getLegacyFilesByGlobs(scriptOptions.legacyGlobs);
 
     if (tmpLegacyFiles.length) {
       legacyFiles.push(...tmpLegacyFiles);
@@ -145,7 +144,7 @@ export default async function compileScripts(options = {}) {
   }
 
   try {
-    if (options.watch) {
+    if (compiler.watchMode) {
       const context = await esbuild.context(config);
       await context.watch();
 
@@ -154,7 +153,7 @@ export default async function compileScripts(options = {}) {
       await esbuild.build(config);
     }
   } catch (error) {
-    console.error(`error processing scripts:`, e);
+    console.error(`error processing scripts:`, error);
   }
 }
 
@@ -188,7 +187,11 @@ function clayScriptPlugin(options = {}) {
         // handlebar templates are handled onLoad
         if (filePath.endsWith('.handlebars') || filePath.endsWith('.hbs')) return null;
 
-        await processModule(filePath, cachedIds, registry, ids, envs);
+        try {
+          await processModule(filePath, cachedIds, registry, ids, envs);
+        } catch (e) {
+          console.log(`error processing module: ${filePath}`, e);
+        }
 
         return null;
       });
@@ -592,7 +595,16 @@ async function writeToDisk(filePath, moduleId, content) {
   }
 
   // write <name(.model|.client|.kiln|.template)/number>.js
-  await fs.writeFile(path.join(paths.publicDir, `${moduleId}.js`), content);
+  if (compiler.minify) {
+   const minified = await esbuild.transform(content, {
+     loader: 'js',
+     minify: true,
+   })
+
+    await fs.writeFile(path.join(paths.publicDir, `${moduleId}.js`), minified.code);
+  } else {
+    await fs.writeFile(path.join(paths.publicDir, `${moduleId}.js`), content);
+  }
 
   if (moduleId.toString().endsWith('.kiln')) {
     // kiln.js files are compiled to <name>.kiln.js and _kiln-<letter>-<letter>.js
@@ -629,15 +641,35 @@ async function processBuckets() {
   // kiln plugins JS
   if (bucketsConfig.kilnPlugins.content) {
     const filePath = path.join(paths.publicDir, bucketsConfig.kilnPlugins.fileName);
+    const content = bucketsConfig.kilnPlugins.content;
 
-    await fs.writeFile(filePath, bucketsConfig.kilnPlugins.content);
+    if (compiler.minify) {
+      const minified = await esbuild.transform(content, {
+        loader: 'js',
+        minify: true,
+      })
+
+      await fs.writeFile(filePath, minified.code);
+    } else {
+      await fs.writeFile(filePath, content);
+    }
   }
 
   // kiln plugins CSS
   if (bucketsConfig.kilnPluginsCss.content) {
     const filePath = bucketsConfig.kilnPluginsCss.fileName;
+    const content = bucketsConfig.kilnPluginsCss.content;
 
-    await fs.writeFile(filePath, bucketsConfig.kilnPluginsCss.content);
+    if (compiler.minify) {
+      const minified = await esbuild.transform(content, {
+        loader: 'css',
+        minify: true,
+      })
+
+      await fs.writeFile(filePath, minified.code);
+    } else {
+      await fs.writeFile(filePath, content);
+    }
   }
 
   // model.js
@@ -647,7 +679,16 @@ async function processBuckets() {
     if (content) {
       const filePath = path.join(paths.publicDir, fileName);
 
-      await fs.writeFile(filePath, content);
+      if (compiler.minify) {
+        const minified = await esbuild.transform(content, {
+          loader: 'js',
+          minify: true,
+        })
+
+        await fs.writeFile(filePath, minified.code);
+      } else {
+        await fs.writeFile(filePath, content);
+      }
     }
   }
 
@@ -658,7 +699,16 @@ async function processBuckets() {
     if (content) {
       const filePath = path.join(paths.publicDir, fileName);
 
-      await fs.writeFile(filePath, content);
+      if (compiler.minify) {
+        const minified = await esbuild.transform(content, {
+          loader: 'js',
+          minify: true,
+        })
+
+        await fs.writeFile(filePath, minified.code);
+      } else {
+        await fs.writeFile(filePath, content);
+      }
     }
   }
 
@@ -669,7 +719,16 @@ async function processBuckets() {
     if (content) {
       const filePath = path.join(paths.publicDir, fileName);
 
-      await fs.writeFile(filePath, content);
+      if (compiler.minify) {
+        const minified = await esbuild.transform(content, {
+          loader: 'js',
+          minify: true,
+        })
+
+        await fs.writeFile(filePath, minified.code);
+      } else {
+        await fs.writeFile(filePath, content);
+      }
     }
   }
 
@@ -680,7 +739,16 @@ async function processBuckets() {
     if (content) {
       const filePath = path.join(paths.publicDir, fileName);
 
-      await fs.writeFile(filePath, content);
+      if (compiler.minify) {
+        const minified = await esbuild.transform(content, {
+          loader: 'js',
+          minify: true,
+        })
+
+        await fs.writeFile(filePath, minified.code);
+      } else {
+        await fs.writeFile(filePath, content);
+      }
     }
   }
 }
@@ -697,17 +765,19 @@ async function processBuckets() {
  * @return {Promise<void>}
  */
 async function processStaticFiles() {
-  const kilnGlob = path.join(process.cwd(), 'node_modules/clay-kiln/dist/clay-kiln-@(edit|view).js');
-  const staticGlob = path.join(__dirname, 'static', '*.js');
-  const staticFilesSrc = (await globby(kilnGlob)).concat((await globby(staticGlob)));
+  const kilnAndStaticGlobs = [
+    path.join(process.cwd(), 'node_modules/clay-kiln/dist/clay-kiln-@(edit|view).js'),
+    path.join(__dirname, 'static', '*.js')
+  ]
+  const kilnAndStaticSrc = await globby(kilnAndStaticGlobs);
 
-  for (const filePath of staticFilesSrc) {
+  for (const filePath of kilnAndStaticSrc) {
     const fileName = path.basename(filePath);
 
     if (fileName.includes('_client-init')) {
       let content = await fs.readFile(filePath, 'utf8');
 
-      content = content.replaceAll('#NODE_ENV#', process.env.NODE_ENV || '');
+      content = content.replaceAll('#NODE_ENV#', compiler.env);
       await fs.writeFile(path.join(paths.publicDir, fileName), content);
     } else {
       fs.copy(filePath, path.join(publicDir, path.basename(filePath)));
@@ -726,7 +796,7 @@ async function processStaticFiles() {
 async function ensureGlobalsAsDependencies(moduleId, globals, ids, registry) {
   const processId = ids[builtIns.process];
 
-  if (globals.includes('process') && !registry[moduleId].includes(processId)) {
+  if (globals.includes('process') && !registry[moduleId]?.includes(processId)) {
     if (!ids[builtIns.process]) {
       console.error('process module not available')
     } else {

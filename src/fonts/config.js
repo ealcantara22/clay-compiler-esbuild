@@ -1,11 +1,12 @@
 import path from 'node:path';
 import process from 'node:process';
 import esbuild from 'esbuild';
-import fs from "fs-extra";
+import fs from 'fs-extra';
 import _findKey from 'lodash/findKey.js'
 import _includes from 'lodash/includes.js'
 import _find from 'lodash/find.js'
 import { globby } from 'globby';
+import compiler, { styleOptions } from '../constants.js'
 
 const sourcePath = path.join(process.cwd(), 'styleguides');
 const publicPath = path.join(process.cwd(), 'public');
@@ -25,21 +26,15 @@ const fontWeights = {
 };
 const fontStyles = ['normal', 'italic', 'oblique'];
 const fontFormats = ['woff', 'woff2', 'otf', 'ttf', 'css'];
-const variables = {
-  'asset-host': process.env.CLAYCLI_COMPILE_ASSET_HOST ? process.env.CLAYCLI_COMPILE_ASSET_HOST.replace(/\/$/, '') : '',
-  'asset-path': process.env.CLAYCLI_COMPILE_ASSET_PATH,
-  minify: process.env.CLAY_COMPILER_MINIFY === 'true',
-  inlined: process.env.CLAYCLI_COMPILE_INLINED_FONTS === 'true',
-  linked: process.env.CLAYCLI_COMPILE_LINKED_FONTS === 'true'
-};
 const fontsSrc = await globby(path.join(sourcePath, '**', 'fonts', `*.{${fontFormats.join(',')}}`));
 const config = {
   entryPoints: fontsSrc.map(entry => formatEntryPoint(entry)),
   outdir: destPath,
   bundle: false,
   write: true,
-  minify: variables.minify,
-  plugins: [clayFontsPlugin()]
+  minify: compiler.minify,
+  logLevel: compiler.logLever,
+  plugins: [clayFontsPlugin()],
 }
 const buckets = {
   linked: {},
@@ -121,9 +116,9 @@ async function getFontCSS(filePath, isInlined = false) {
       css += `/* inlined */`
       css += `src: url(data:font/${format};charset=utf-8;base64,${code.toString('base64')}) format("${format}"); }`;
     } else {
-      let assetHost = variables['asset-host'],
-        assetPath = variables['asset-path']
-          ? `/${variables['asset-path']}`
+      let assetHost = styleOptions.assetHost,
+        assetPath = styleOptions.assetPath
+          ? `/${styleOptions.assetPath}`
           : '';
 
       css += `/* not inlined */`
@@ -182,8 +177,8 @@ function clayFontsPlugin(options = {}) {
 
       build.onLoad({ filter:/\.(woff|woff2|otf|ttf|css)$/ }, async (args) => {
         const filePath = args.path;
-        const inlined = variables.inlined || false;
-        const linked = variables.linked || getLinkedSetting(variables.linked, inlined);
+        const inlined = styleOptions.inlinedFonts;
+        const linked = styleOptions.linkedFonts || getLinkedSetting(styleOptions.linkedFonts, inlined);
         const basedir = path.dirname(filePath);
         const styleguide = basedir.split('/').slice(-2)[0];
         let contents = '';
@@ -214,13 +209,14 @@ function clayFontsPlugin(options = {}) {
 
       build.onEnd(async () => {
         // process the buckets
-        const minify = variables.minify || false;
+        const minify = compiler.minify;
 
-        for (const bucket of Object.keys(buckets)) {
-          for (const siteBucket of Object.keys(buckets[bucket])) {
+        for (const bucketKey of Object.keys(buckets)) {
+          for (const siteKey of Object.keys(buckets[bucketKey])) {
+            const bucket = buckets[bucketKey][siteKey];
             const bucketPath = path.join(publicPath, 'css');
-            const bucketFile = path.join(bucketPath, buckets[bucket][siteBucket].fileName);
-            let content = buckets[bucket][siteBucket].content;
+            const bucketFile = path.join(bucketPath, bucket.fileName);
+            let content = bucket.content;
 
             if (content) {
               if (minify) content = await minifyCSS(content);
@@ -237,13 +233,11 @@ function clayFontsPlugin(options = {}) {
 /**
  * Compiles font assets using the specified options.
  *
- * @param {Object} [options={}] Configuration options for the font compilation.
- * @param {boolean} [options.watch] If true, enables watch mode to rebuild fonts on changes.
  * @return {Promise<void>} A promise that resolves when the font compilation process is complete.
  */
-export default async function compileFonts(options = {}) {
+export default async function compileFonts() {
   try {
-    if (options.watch) {
+    if (compiler.watchMode) {
       const context = await esbuild.context(config);
       await context.watch()
     } else {
